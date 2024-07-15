@@ -1,0 +1,34 @@
+name: 'devcontainer CI' 
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  build_devcontainer:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        config: 
+          - default
+          - cuda-opengl
+    steps:
+      - name: Checkout from github
+        uses: actions/checkout@v3
+      - name: extract the github reference
+        run: echo "BRANCH=${GITHUB_REF##*/}" >> $GITHUB_ENV
+      - name: "image name from repo name"
+        id: docker_image_name
+        run: echo "docker_image=${{ github.repository }}" | tr '[:upper:]' '[:lower:]' |sed 's/[^0-9,a-z,A-Z,=,_,\/]/-/g' >>${GITHUB_OUTPUT}
+      - name: Build and run dev container task
+        uses: devcontainers/ci@v0.3
+        with:
+          imageName: lcas.lincoln.ac.uk/devcontainer/${{ steps.docker_image_name.outputs.docker_image }}
+          configFile: ./.devcontainer/${{ matrix.config }}/devcontainer.json
+          push: never
+          imageTag: ${{ matrix.config }}-${{ env.BRANCH }}
+          #runCmd: "bash .devcontainer/run-ci.sh"

@@ -1,0 +1,46 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/ubuntu
+{
+	"name": "L-CAS Humble CUDA-OpenGL Devcontainer",
+	"build": {
+		"dockerfile": "../Dockerfile",
+		"args": {
+			"BASE_IMAGE": "lcas.lincoln.ac.uk/lcas/ros:jammy-humble-cuda12.2-opengl"
+		},
+		"context": "../.."
+	},
+
+	"forwardPorts": [5801],
+	"portsAttributes": {
+		"5801": {
+			"label": "desktop",
+			"onAutoForward": "openBrowser"
+		}
+	},
+
+	// Use 'postCreateCommand' to run commands after the container is created.
+	// Here we run `colcon build` to build the workspace initially, (to speed up later builds), and we keep going if it fails for some packages to get as much compiled as possible
+	"postCreateCommand": "/opt/entrypoint.sh /bin/true; .devcontainer/post-create.sh",
+
+	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+	"remoteUser": "ros",
+	"updateRemoteUserUID": true, // ensure internal user has the same UID as the host user and update file permissions
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python",
+				"GitHub.vscode-pull-request-github",
+				"ms-vscode.cpptools",
+				"JaehyunShim.vscode-ros2",
+				"nonanonno.vscode-ros2",
+				"deitry.colcon-helper",
+				"github.vscode-github-actions"
+			]
+		}
+	},
+	"hostRequirements": {
+		"gpu": "optional",
+		"cpus": 2,
+		"memory": "8gb"
+	}
+}
