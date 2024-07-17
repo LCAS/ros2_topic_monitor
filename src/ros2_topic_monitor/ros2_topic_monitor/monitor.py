@@ -39,7 +39,7 @@ class CheckTopicsGui(Node):
         self.gui.title("TOPICS MONITOR")
         self.gui.protocol("WM_DELETE_WINDOW", self.window_closing)
 
-        self.spackensors_frame = tk.LabelFrame(self.gui, text="SENSORS", font=("Arial Bold", self.font_size + 1))
+        self.sensors_frame = tk.LabelFrame(self.gui, text="SENSORS", font=("Arial Bold", self.font_size + 1))
         self.sensors_frame.grid(row=0, column=0, padx=10, pady=10, sticky="w")
 
         self.recording_frame = tk.LabelFrame(self.gui, text="RECORDING", font=("Arial Bold", self.font_size + 1))
