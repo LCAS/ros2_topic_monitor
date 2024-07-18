@@ -3,9 +3,9 @@ topics:
     - /back_lidar/points
     - /front_lidar/points
   cameras:
-    - /back_camera/image_raw
-    - /back_camera/depth
-    - /back_camera/points
+    # - /back_camera/image_raw
+    # - /back_camera/depth
+    # - /back_camera/points
     - /front_camera/image_raw
     - /front_camera/depth
     - /front_camera/points
@@ -16,6 +16,7 @@ topics:
   tf:
     - /tf
     - /tf_static
+    - /robot_description
   odometry:
     - /odometry/global
     - /odometry/local

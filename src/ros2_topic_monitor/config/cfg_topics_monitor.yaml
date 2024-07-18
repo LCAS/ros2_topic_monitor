@@ -1,19 +1,19 @@
 sensors:
   - name: "GPS odom"
-    topic: "gps_base/odometry"
+    topic: "/gps_base/odometry"
     message_type: "nav_msgs.msg.Odometry"
   - name: "LIVOX back"
-    topic: "back_lidar/points"
+    topic: "/back_lidar/points"
     message_type: "sensor_msgs.msg.PointCloud2"
   - name: "LIVOX front"
-    topic: "front_lidar/points"
+    topic: "/front_lidar/points"
     message_type: "sensor_msgs.msg.PointCloud2"
   - name: "ZED back"
-    topic: "back_camera/depth/camera_info"
-    message_type: "sensor_msgs.msg.CameraInfo"
+    topic: "/back_camera/depth"
+    message_type: "sensor_msgs.msg.Image"
   - name: "ZED front"
-    topic: "front_camera/depth/camera_info"
-    message_type: "sensor_msgs.msg.CameraInfo"
+    topic: "/front_camera/depth"
+    message_type: "sensor_msgs.msg.Image"
 
 #This is to monitor the recording process as this topic is being published from the record node
 recording:

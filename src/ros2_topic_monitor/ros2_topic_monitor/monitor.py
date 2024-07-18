@@ -5,7 +5,7 @@ import yaml
 import rclpy
 import importlib
 import tkinter as tk
-
+from rclpy.qos import QoSProfile, HistoryPolicy, ReliabilityPolicy, DurabilityPolicy
 from rclpy.node import Node
 from rclpy import Parameter 
 from ament_index_python.packages import get_package_share_directory
@@ -60,7 +60,11 @@ class CheckTopicsGui(Node):
 
             msg_type = self.import_message_type(sensor['message_type'])
             callback = self.create_callback(sensor['name'])
-            subscriber = self.create_subscription(msg_type, sensor['topic'], callback, 10)
+            qos = QoSProfile(depth=10, 
+                         reliability=ReliabilityPolicy.BEST_EFFORT,
+                         history=HistoryPolicy.KEEP_LAST,
+                         durability=DurabilityPolicy.VOLATILE)
+            subscriber = self.create_subscription(msg_type, sensor['topic'], callback, qos_profile=qos)
             self.subscribers.append(subscriber)
 
     def setup_recording(self):
