@@ -1,5 +1,29 @@
 #!/usr/bin/env python3
 
+"""
+Apache 2.0 License
+
+Author: Ibrahim Hroob (ihroob@lincoln.ac.uk)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
 import os
 import yaml
 import rclpy
@@ -30,6 +54,7 @@ class CheckTopicsGui(Node):
         self.sensors_status = {}
         self.recording = False
         self.gnss_status = -1
+        self.gnss_service = 1
 
         # Load configuration from YAML file
         with open(self.cfg_pth, 'r') as file:
@@ -63,6 +88,11 @@ class CheckTopicsGui(Node):
         button.grid(row=row, column=column, padx=5)
         return button
 
+
+    '''
+        The sensors button interface are created dynamically based on the topics that need
+        to be monitored. 
+    '''
     def setup_sensors(self):
         for index, sensor in enumerate(self.config['sensors']):
             self.sensors_status[sensor['name']] = False
@@ -76,6 +106,7 @@ class CheckTopicsGui(Node):
     def setup_gnss_status(self):
         gnss_status_config = self.config['gnss_status']
         self.gnss_status_button = self.create_button(self.gnss_status_frame, text='NO FIX', row=0, column=1)
+        self.gnss_service_button = self.create_button(self.gnss_status_frame, text='GPS'  , row=1, column=1)
 
         msg_type = self.import_message_type(gnss_status_config['message_type'])
         self.gnss_status_subscriber = self.create_subscription(msg_type, gnss_status_config['topic'], self.gnss_status_callback, qos_profile=qos_profile_sensor_data)
@@ -106,6 +137,7 @@ class CheckTopicsGui(Node):
 
     def gnss_status_callback(self, msg):
         self.gnss_status = msg.status.status
+        self.gnss_service = msg.status.service
 
     def update_gnss_status(self):
         if self.gnss_status == 2:
@@ -116,8 +148,19 @@ class CheckTopicsGui(Node):
             text, color = 'FIX', "yellow"
         else:
             text, color = 'NO FIX', "red"
+
+        if self.gnss_service == 8:
+            service_text = 'GALILEO'
+        elif self.gnss_service == 4:
+            service_text = 'COMPASS'
+        elif self.gnss_service == 2:
+            service_text = 'GLONASS'
+        else:
+            service_text = 'GPS'
         
         self.gnss_status_button.configure(text=text, background=color, activebackground=color)
+        self.gnss_service_button.configure(text='Service: '+service_text, background='blue', activebackground='blue')
+        
         self.gnss_status = -1
 
     def rosbag_recording_callback(self, msg):
