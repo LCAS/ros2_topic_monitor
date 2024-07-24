@@ -33,6 +33,7 @@ from rclpy.node import Node
 from rclpy import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from ament_index_python.packages import get_package_share_directory
+import threading
 
 
 class CheckTopicsGui(Node):
@@ -47,8 +48,8 @@ class CheckTopicsGui(Node):
         cfg_pth_default = os.path.join(package_share_directory, 'config', 'cfg_topics_monitor.yaml')
         self.cfg_pth = self.cfg_pth or cfg_pth_default
 
-        self.button_width = 11
-        self.font_size = 11
+        self.button_width = 15
+        self.font_size = 12
 
         # Setup flags
         self.sensors_status = {}
@@ -60,7 +61,7 @@ class CheckTopicsGui(Node):
         with open(self.cfg_pth, 'r') as file:
             self.config = yaml.safe_load(file)
 
-        # Setup tkinter gui
+        # Setup tkinter GUI
         self.gui = tk.Tk()
         self.gui.title("TOPICS MONITOR")
         self.gui.protocol("WM_DELETE_WINDOW", self.window_closing)
@@ -69,30 +70,38 @@ class CheckTopicsGui(Node):
         self.sensors_frame = self.create_label_frame(self.gui, "SENSORS", row=0, column=0)
         self.gnss_status_frame = self.create_label_frame(self.gui, "GNSS STATUS", row=0, column=1)
         self.recording_frame = self.create_label_frame(self.gui, "RECORDING", row=0, column=2)
+        self.exit_frame = self.create_label_frame(self.gui, "", row=1, column=1)
 
         self.subscribers = []
         self.setup_sensors()
         self.setup_gnss_status()
         self.setup_recording()
+        self.setup_exit_button()
 
+        # Timer to update GUI
         self.timer = self.create_timer(2, self.update_gui)
 
-    def create_label_frame(self, parent, text='', row=0, column=0):
+        # Initialize ROS 2 context
+        self.is_initialized = True
+
+    def create_label_frame(self, parent, text='', row=0, column=0, columnspan=1):
         frame = tk.LabelFrame(parent, text=text, font=("Arial Bold", self.font_size + 1))
-        frame.grid(row=row, column=column, padx=10, pady=10, sticky="w")
+        
+        # Add to grid with expansion in both directions
+        frame.grid(row=row, column=column, padx=10, pady=10, sticky="ew", columnspan=columnspan)
+        
+        # Configure columns in the frame to expand and center content
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(0, weight=1)
+        
         return frame
 
-    def create_button(self, frame, text, row, column):
-        button = tk.Button(frame, text=text, command=self.dummy_callback, width=self.button_width, background="red",
-                           activebackground="red", font=("Arial Bold", self.font_size))
-        button.grid(row=row, column=column, padx=5)
+    def create_button(self, frame, text, row, column, command=None, background="red", activebackground="red"):
+        button = tk.Button(frame, text=text, command=command, width=self.button_width, background=background,
+                           activebackground=activebackground, font=("Arial Bold", self.font_size))
+        button.grid(row=row, column=column, padx=5, pady=5)
         return button
 
-
-    '''
-        The sensors button interface are created dynamically based on the topics that need
-        to be monitored. 
-    '''
     def setup_sensors(self):
         for index, sensor in enumerate(self.config['sensors']):
             self.sensors_status[sensor['name']] = False
@@ -106,7 +115,7 @@ class CheckTopicsGui(Node):
     def setup_gnss_status(self):
         gnss_status_config = self.config['gnss_status']
         self.gnss_status_button = self.create_button(self.gnss_status_frame, text='NO FIX', row=0, column=1)
-        self.gnss_service_button = self.create_button(self.gnss_status_frame, text='GPS'  , row=1, column=1)
+        self.gnss_service_button = self.create_button(self.gnss_status_frame, text='GPS', row=1, column=1)
 
         msg_type = self.import_message_type(gnss_status_config['message_type'])
         self.gnss_status_subscriber = self.create_subscription(msg_type, gnss_status_config['topic'], self.gnss_status_callback, qos_profile=qos_profile_sensor_data)
@@ -117,6 +126,27 @@ class CheckTopicsGui(Node):
 
         msg_type = self.import_message_type(recording_config['message_type'])
         self.recording_subscriber = self.create_subscription(msg_type, recording_config['topic'], self.rosbag_recording_callback, qos_profile=qos_profile_sensor_data)
+
+    def setup_exit_button(self):
+        # Create the exit button with grey color
+        self.exit_button = self.create_button(
+            self.exit_frame, 
+            text="Exit", 
+            row=0, 
+            column=0, 
+            command=self.window_closing
+        )
+        self.exit_button.configure(
+            background="grey",        # Sets the background color to grey
+            activebackground="darkgrey"  # Sets the color when the button is pressed
+        )
+        # Make sure to set the columnspan in the grid configuration
+        self.exit_button.grid(row=0, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
+
+        # Ensure the parent frame is correctly configured
+        self.exit_frame.grid_columnconfigure(0, weight=1)
+        self.exit_frame.grid_columnconfigure(1, weight=1)
+        self.exit_frame.grid_columnconfigure(2, weight=1)
 
     def import_message_type(self, message_type_str):
         module_name, class_name = message_type_str.rsplit('.', 1)
@@ -129,8 +159,13 @@ class CheckTopicsGui(Node):
         return callback
 
     def window_closing(self):
-        self.gui.destroy()
-        rclpy.shutdown()
+        if self.is_initialized:
+            try:
+                self.gui.quit()  # Stop the Tkinter main loop
+                self.is_initialized = False  # Mark as not initialized to avoid multiple shutdown attempts
+                rclpy.shutdown()
+            except Exception as e:
+                print(f"Error during shutdown: {e}")
 
     def dummy_callback(self):
         pass
@@ -159,7 +194,7 @@ class CheckTopicsGui(Node):
             service_text = 'GPS'
         
         self.gnss_status_button.configure(text=text, background=color, activebackground=color)
-        self.gnss_service_button.configure(text='Service: '+service_text, background='blue', activebackground='blue')
+        self.gnss_service_button.configure(text='Service: '+service_text, background='lightblue', activebackground='lightblue')
         
         self.gnss_status = -1
 
@@ -186,13 +221,28 @@ class CheckTopicsGui(Node):
         self.gui.update()
 
 
+def ros2_spin(node):
+    try:
+        rclpy.spin(node)
+    except Exception as e:
+        print(f"Error during ROS 2 spin: {e}")
+
+
 def main(args=None):
     rclpy.init(args=args)
     ctg = CheckTopicsGui()
-    rclpy.spin(ctg)
-    ctg.destroy_node()
-    rclpy.shutdown()
 
+    # Run ROS 2 spin in a separate thread
+    ros2_thread = threading.Thread(target=ros2_spin, args=(ctg,))
+    ros2_thread.start()
+
+    try:
+        ctg.gui.mainloop()  # Run Tkinter's main loop
+    except KeyboardInterrupt:
+        pass
+    finally:
+        ctg.window_closing()  # Call window_closing to ensure proper shutdown
+        ros2_thread.join()  # Ensure the ROS 2 thread has finished
 
 if __name__ == '__main__':
     main()
