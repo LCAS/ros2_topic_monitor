@@ -79,7 +79,7 @@ class CheckTopicsGui(Node):
         self.setup_exit_button()
 
         # Timer to update GUI
-        self.timer = self.create_timer(2, self.update_gui)
+        self.timer = self.create_timer(0.5, self.update_gui)
 
         # Initialize ROS 2 context
         self.is_initialized = True
