@@ -5,9 +5,9 @@ import yaml
 import rclpy
 import importlib
 import tkinter as tk
-from rclpy.qos import QoSProfile, HistoryPolicy, ReliabilityPolicy, DurabilityPolicy
 from rclpy.node import Node
 from rclpy import Parameter 
+from rclpy.qos import qos_profile_sensor_data
 from ament_index_python.packages import get_package_share_directory
 
 class CheckTopicsGui(Node):
@@ -29,6 +29,7 @@ class CheckTopicsGui(Node):
         # setup flags
         self.sensors_status = {}
         self.recording = False
+        self.gnss_status = -1
 
         # Load configuration from YAML file
         with open(self.cfg_pth, 'r') as file:
@@ -39,41 +40,52 @@ class CheckTopicsGui(Node):
         self.gui.title("TOPICS MONITOR")
         self.gui.protocol("WM_DELETE_WINDOW", self.window_closing)
 
-        self.sensors_frame = tk.LabelFrame(self.gui, text="SENSORS", font=("Arial Bold", self.font_size + 1))
-        self.sensors_frame.grid(row=0, column=0, padx=10, pady=10, sticky="w")
-
-        self.recording_frame = tk.LabelFrame(self.gui, text="RECORDING", font=("Arial Bold", self.font_size + 1))
-        self.recording_frame.grid(row=0, column=1, padx=10, pady=10, sticky="w")
-
+        # Setup sensor frames
+        self.sensors_frame      = self.create_label_frame(self.gui, "SENSORS"    , row=0, column=0)
+        self.gnss_status_frame  = self.create_label_frame(self.gui, "GNSS STATUS", row=0, column=1)
+        self.recording_frame    = self.create_label_frame(self.gui, "RECORDING"  , row=0, column=2)
+        
         self.subscribers = []
         self.setup_sensors()
+        self.setup_gnss_status()
         self.setup_recording()
 
-        self.timer = self.create_timer(0.5, self.update_gui)
+        self.timer = self.create_timer(2, self.update_gui)
+
+    def create_label_frame(self, parent, text='', row=0, column=0):
+        frame = tk.LabelFrame(parent, text=text, font=("Arial Bold", self.font_size + 1))
+        frame.grid(row=row, column=column, padx=10, pady=10, sticky="w")
+        return frame
+    
+    def create_button(self, frame, text, row, column):
+        button = tk.Button(frame, text=text, command=self.dummy_callback, width=self.button_width, background="red", activebackground="red", font=("Arial Bold", self.font_size))
+        button.grid(row=row, column=column, padx=5)
+        return button
 
     def setup_sensors(self):
         for index, sensor in enumerate(self.config['sensors']):
             self.sensors_status[sensor['name']] = False
-            button = tk.Button(self.sensors_frame, text=sensor['name'], command=self.dummy_callback, width=self.button_width, background="red", activebackground="red", font=("Arial Bold", self.font_size))
-            button.grid(row=index, column=0, padx=5)
+            button = self.create_button(self.sensors_frame, sensor['name'], row=index, column=0)
             setattr(self, f"{sensor['name'].lower().replace(' ', '_')}_button", button)
-
             msg_type = self.import_message_type(sensor['message_type'])
             callback = self.create_callback(sensor['name'])
-            qos = QoSProfile(depth=10, 
-                         reliability=ReliabilityPolicy.BEST_EFFORT,
-                         history=HistoryPolicy.KEEP_LAST,
-                         durability=DurabilityPolicy.VOLATILE)
-            subscriber = self.create_subscription(msg_type, sensor['topic'], callback, qos_profile=qos)
+            subscriber = self.create_subscription(msg_type, sensor['topic'], callback, qos_profile=qos_profile_sensor_data)
             self.subscribers.append(subscriber)
+
+    def setup_gnss_status(self):
+        gnss_status_config = self.config['gnss_status']
+        self.gnss_status_button = self.create_button(self.gnss_status_frame, text='NO FIX', row=0, column=1)
+
+        msg_type = self.import_message_type(gnss_status_config['message_type'])
+        self.gnss_status_subscriber = self.create_subscription(msg_type, gnss_status_config['topic'], self.gnss_status_callback, qos_profile=qos_profile_sensor_data)
+
 
     def setup_recording(self):
         recording_config = self.config['recording']
-        self.recording_button = tk.Button(self.recording_frame, text="Recording\nin progress", command=self.dummy_callback, width=self.button_width, background="red", activebackground="red", font=("Arial Bold", self.font_size))
-        self.recording_button.grid(row=0, column=1, padx=5)
+        self.recording_button = self.create_button(self.recording_frame, text="Recording\nin progress", row=0, column=2)
 
         msg_type = self.import_message_type(recording_config['message_type'])
-        self.recording_subscriber = self.create_subscription(msg_type, recording_config['topic'], self.rosbag_recording_callback, 10)
+        self.recording_subscriber = self.create_subscription(msg_type, recording_config['topic'], self.rosbag_recording_callback, qos_profile=qos_profile_sensor_data)
 
     def import_message_type(self, message_type_str):
         module_name, class_name = message_type_str.rsplit('.', 1)
@@ -93,10 +105,25 @@ class CheckTopicsGui(Node):
     def dummy_callback(self):
         return
 
+    def gnss_status_callback(self, msg):
+        self.gnss_status = msg.status.status
+
+    def update_gnss_status(self):
+        if self.gnss_status == 2:
+            self.gnss_status_button.configure(text='GBAS FIX', background="green", activebackground="green")
+        elif self.gnss_status == 1:
+            self.gnss_status_button.configure(text='SBAS FIX', background="green", activebackground="green")
+        elif self.gnss_status == 0:
+            self.gnss_status_button.configure(text='FIX', background="yellow", activebackground="yellow")
+        else:
+            self.gnss_status_button.configure(text='NO FIX', background="red", activebackground="red")
+        
+        self.gnss_status = -1
+
     def rosbag_recording_callback(self, msg):
         self.recording = True
 
-    def update_gui(self):
+    def update_sensosrs_frame_gui(self):
         for sensor_name, status in self.sensors_status.items():
             button = getattr(self, f"{sensor_name.lower().replace(' ', '_')}_button")
             if status:
@@ -104,16 +131,23 @@ class CheckTopicsGui(Node):
             else:
                 button.configure(background="red", activebackground="red")
 
-        if self.recording:
-            self.recording_button.configure(background="green", activebackground="green")
-        else:
-            self.recording_button.configure(background="red", activebackground="red")
+        #reset status as to be updated if we get new topics 
+        for sensor_name in self.sensors_status.keys():
+            self.sensors_status[sensor_name] = False
+
+    def update_recording_frame_gui(self):
+        self.recording_button.configure(
+            background="green" if self.recording else "red",
+            activebackground="green" if self.recording else "red")
+        self.recording = False
+
+    def update_gui(self):
+        self.update_sensosrs_frame_gui()
+        self.update_gnss_status()
+        self.update_recording_frame_gui()
 
         self.gui.update()
 
-        for sensor_name in self.sensors_status.keys():
-            self.sensors_status[sensor_name] = False
-        self.recording = False
 
 def main(args=None):
     rclpy.init(args=args)

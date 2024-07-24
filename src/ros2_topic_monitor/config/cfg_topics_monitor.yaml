@@ -15,6 +15,10 @@ sensors:
     topic: "/front_camera/depth"
     message_type: "sensor_msgs.msg.Image"
 
+gnss_status:
+  topic: "/gps_base/fix"
+  message_type: "sensor_msgs.msg.NavSatFix"
+
 #This is to monitor the recording process as this topic is being published from the record node
 recording:
   topic: "rosbag_recording"
