@@ -23,8 +23,6 @@ This tool consists of two nodes:
 <details>
 <summary>Monitoring Node</summary>
 
-Launching the Monitoring Node
-
 To launch the monitoring node, use the following command:
 ```bash
 ros2 launch ros2_topic_monitor monitor.launch.py
@@ -55,8 +53,19 @@ Where the `name` attribute is used to display it in the GUI, and the `topic` is 
 
 <details>
 <summary>Recording Node</summary>
-  
-![image](https://github.com/user-attachments/assets/9309e811-676f-405b-90a0-1efeb3c354b9)
+
+To launch the recording node, use the following command:
+```bash
+ros2 launch ros2_topic_monitor record.launch.py
+```
+
+While will give the following GUI where you can define the recording path and the bag name:
+
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/9309e811-676f-405b-90a0-1efeb3c354b9" alt="Record GUI" width="400"/>
+</p>
+
+The topics to be recorded need to be added into [this](https://github.com/LCAS/ros2_topic_monitor/blob/main/src/ros2_topic_monitor/config/cfg_topics_record.yaml) config file.
 
 </details>
 
