@@ -33,10 +33,10 @@ ros2 launch ros2_topic_monitor monitor.launch.py
 The above command will launch the following GUI, where the photo on the left when there are no topics available and on the right with the available topics: 
 
 
-<div style="display: flex; flex-direction: row;">
-    <img src="https://github.com/user-attachments/assets/a1b2d637-f962-49ba-a803-351cba5ac75c" alt="Topics Not Being Published" width="300"/>
-    <img src="https://github.com/user-attachments/assets/8e69149b-9cbc-45bd-8668-26686b359e35" alt="Topics Being Published" width="300"/>
-</div>
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/a1b2d637-f962-49ba-a803-351cba5ac75c" alt="Topics Not Being Published" width="400"/>
+    <img src="https://github.com/user-attachments/assets/8e69149b-9cbc-45bd-8668-26686b359e35" alt="Topics Being Published" width="400"/>
+</p>
 
 The GUI can dynamically adapt to new topics by adding them to the configuration file [here](https://github.com/LCAS/ros2_topic_monitor/blob/main/src/ros2_topic_monitor/config/cfg_topics_monitor.yaml). All topics need to be added under the 'sensors' section. Here is an example:
 
