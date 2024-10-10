@@ -67,10 +67,10 @@ class CheckTopicsGui(Node):
         self.gui.protocol("WM_DELETE_WINDOW", self.window_closing)
 
         # Setup frames
-        self.sensors_frame = self.create_label_frame(self.gui, "SENSORS", row=0, column=0)
-        self.gnss_status_frame = self.create_label_frame(self.gui, "GNSS STATUS", row=0, column=1)
-        self.recording_frame = self.create_label_frame(self.gui, "RECORDING", row=0, column=2)
-        self.exit_frame = self.create_label_frame(self.gui, "", row=1, column=1)
+        self.sensors_frame = self.create_label_frame(self.gui, "HEALTH", row=0, column=0)
+        self.gnss_status_frame = self.create_label_frame(self.gui, "GNSS STATUS", row=1, column=0)
+        self.recording_frame = self.create_label_frame(self.gui, "RECORDING", row=2, column=0)
+        self.exit_frame = self.create_label_frame(self.gui, "", row=3, column=0)
 
         self.subscribers = []
         self.setup_sensors()
@@ -79,7 +79,7 @@ class CheckTopicsGui(Node):
         self.setup_exit_button()
 
         # Timer to update GUI
-        self.timer = self.create_timer(0.5, self.update_gui)
+        self.timer = self.create_timer(2, self.update_gui)
 
         # Initialize ROS 2 context
         self.is_initialized = True
