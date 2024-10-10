@@ -26,6 +26,7 @@ SOFTWARE.
 
 import os
 import yaml
+import time
 import rclpy
 import importlib
 import tkinter as tk
@@ -56,6 +57,9 @@ class CheckTopicsGui(Node):
         self.recording = False
         self.gnss_status = -1
         self.gnss_service = 1
+
+        # Dictionary to store the message timestamps for each sensor
+        self.sensors_timestamps = {}
 
         # Load configuration from YAML file
         with open(self.cfg_pth, 'r') as file:
@@ -156,7 +160,34 @@ class CheckTopicsGui(Node):
     def create_callback(self, sensor_name):
         def callback(msg):
             self.sensors_status[sensor_name] = True
+
+            # Track message arrival time for calculating publish rate
+            if sensor_name not in self.sensors_timestamps:
+                self.sensors_timestamps[sensor_name] = []
+            
+            current_time = time.time()
+            self.sensors_timestamps[sensor_name].append(current_time)
+
+            # Keep only the last few timestamps (for example, last 10 messages)
+            if len(self.sensors_timestamps[sensor_name]) > 10:
+                self.sensors_timestamps[sensor_name].pop(0)
+
         return callback
+
+    def calculate_publish_rate(self, timestamps):
+        """Calculates the publish rate (Hz) based on message timestamps."""
+        if len(timestamps) < 2:
+            return 0.0  # Not enough data to calculate rate
+
+        # Calculate time differences between consecutive messages
+        time_diffs = [timestamps[i] - timestamps[i - 1] for i in range(1, len(timestamps))]
+
+        # Calculate the average time difference
+        avg_time_diff = sum(time_diffs) / len(time_diffs) if time_diffs else 0
+
+        # Calculate the rate in Hz
+        publish_rate = 1.0 / avg_time_diff if avg_time_diff > 0 else 0
+        return publish_rate
 
     def window_closing(self):
         if self.is_initialized:
@@ -205,10 +236,17 @@ class CheckTopicsGui(Node):
         for sensor_name, status in self.sensors_status.items():
             button = getattr(self, f"{sensor_name.lower().replace(' ', '_')}_button")
             color = "green" if status else "red"
-            button.configure(background=color, activebackground=color)
+
+            # Calculate publish rate and update button text
+            timestamps = self.sensors_timestamps.get(sensor_name, [])
+            publish_rate = self.calculate_publish_rate(timestamps)
+            button_text = f"{sensor_name} ({publish_rate:.1f} Hz)"  # Update button text with publish rate
+
+            button.configure(text=button_text, background=color, activebackground=color)
+
         # Reset status to be updated if we get new topics 
         self.sensors_status = {sensor_name: False for sensor_name in self.sensors_status}
-
+        
     def update_recording_frame_gui(self):
         color = "green" if self.recording else "red"
         self.recording_button.configure(background=color, activebackground=color)
