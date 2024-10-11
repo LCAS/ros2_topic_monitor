@@ -49,17 +49,23 @@ class CheckTopicsGui(Node):
         cfg_pth_default = os.path.join(package_share_directory, 'config', 'cfg_topics_monitor.yaml')
         self.cfg_pth = self.cfg_pth or cfg_pth_default
 
-        self.button_width = 15
+        self.button_width = 22
         self.font_size = 12
 
         # Setup flags
         self.sensors_status = {}
+        self.robot_status = {}
         self.recording = False
         self.gnss_status = -1
         self.gnss_service = 1
 
         # Dictionary to store the message timestamps for each sensor
         self.sensors_timestamps = {}
+
+        # Add dictionaries to hold the latest metrics
+        self.battery_level = None
+        self.traveled_distance = None
+        self.robot_speed = None
 
         # Load configuration from YAML file
         with open(self.cfg_pth, 'r') as file:
@@ -73,12 +79,14 @@ class CheckTopicsGui(Node):
         # Setup frames
         self.sensors_frame = self.create_label_frame(self.gui, "HEALTH", row=0, column=0)
         self.gnss_status_frame = self.create_label_frame(self.gui, "GNSS STATUS", row=1, column=0)
-        self.recording_frame = self.create_label_frame(self.gui, "RECORDING", row=2, column=0)
-        self.exit_frame = self.create_label_frame(self.gui, "", row=3, column=0)
+        self.robot_status_frame = self.create_label_frame(self.gui, "STATUS", row=2, column=0)
+        self.recording_frame = self.create_label_frame(self.gui, "RECORDING", row=3, column=0)
+        self.exit_frame = self.create_label_frame(self.gui, "", row=4, column=0)
 
         self.subscribers = []
         self.setup_sensors()
         self.setup_gnss_status()
+        self.setup_robot_status()
         self.setup_recording()
         self.setup_exit_button()
 
@@ -100,36 +108,111 @@ class CheckTopicsGui(Node):
         
         return frame
 
-    def create_button(self, frame, text, row, column, command=None, background="red", activebackground="red"):
+    def create_button(self, frame, text, row, column, command=None, background="red", activebackground="light gray", anchor="center"):
         button = tk.Button(frame, text=text, command=command, width=self.button_width, background=background,
-                           activebackground=activebackground, font=("Arial Bold", self.font_size))
+                           activebackground=activebackground, font=("Arial Bold", self.font_size), anchor=anchor)
         button.grid(row=row, column=column, padx=5, pady=5)
         return button
 
     def setup_sensors(self):
+        # Check if 'sensors' exists in the config
+        if 'sensors' not in self.config:
+            print("Warning: 'sensors' key not found in config. No sensors will be set up.")
+            self.sensors_status = {}  # Set a default value if necessary
+            return  # Exit the function early
+
         for index, sensor in enumerate(self.config['sensors']):
             self.sensors_status[sensor['name']] = False
             button = self.create_button(self.sensors_frame, sensor['name'], row=index, column=0)
             setattr(self, f"{sensor['name'].lower().replace(' ', '_')}_button", button)
-            msg_type = self.import_message_type(sensor['message_type'])
+
+            # Use get method to avoid KeyError
+            msg_type = self.import_message_type(sensor.get('message_type', 'default_message_type'))  # Default message type
             callback = self.create_callback(sensor['name'])
-            subscriber = self.create_subscription(msg_type, sensor['topic'], callback, qos_profile=qos_profile_sensor_data)
-            self.subscribers.append(subscriber)
+
+            try:
+                subscriber = self.create_subscription(msg_type, sensor['topic'], callback, qos_profile=qos_profile_sensor_data)
+                self.subscribers.append(subscriber)
+            except Exception as e:
+                print(f"Error creating subscription for sensor '{sensor['name']}': {e}")
 
     def setup_gnss_status(self):
+        # Check if 'gnss_status' exists in the config
+        if 'gnss_status' not in self.config:
+            print("Warning: 'gnss_status' key not found in config. GNSS status will not be set up.")
+            return  # Exit the function early
+
         gnss_status_config = self.config['gnss_status']
+
+        # Check for required keys in gnss_status_config
+        if 'message_type' not in gnss_status_config or 'topic' not in gnss_status_config:
+            print("Warning: 'message_type' or 'topic' key not found in 'gnss_status' config. GNSS status will not be set up.")
+            return  # Exit if necessary keys are missing
+
         self.gnss_status_button = self.create_button(self.gnss_status_frame, text='NO FIX', row=0, column=1)
         self.gnss_service_button = self.create_button(self.gnss_status_frame, text='GPS', row=1, column=1)
 
         msg_type = self.import_message_type(gnss_status_config['message_type'])
-        self.gnss_status_subscriber = self.create_subscription(msg_type, gnss_status_config['topic'], self.gnss_status_callback, qos_profile=qos_profile_sensor_data)
+        
+        try:
+            self.gnss_status_subscriber = self.create_subscription(
+                msg_type, 
+                gnss_status_config['topic'], 
+                self.gnss_status_callback, 
+                qos_profile=qos_profile_sensor_data
+            )
+        except Exception as e:
+            print(f"Error creating GNSS status subscription: {e}")
+
+    def setup_robot_status(self):
+        # Check if 'robot_status' exists in the config
+        if 'robot_status' not in self.config:
+            # Log a warning or error message
+            print("Warning: 'robot_status' key not found in config. Using default settings.")
+            self.robot_status = {}  # or set it to a default value if necessary
+            return  # Exit the function early
+
+        # If it exists, proceed as normal
+        for index, status in enumerate(self.config['robot_status']):
+            self.robot_status[status['name']] = 0.0
+            button = self.create_button(self.robot_status_frame, status['name'], row=index, column=0, anchor="w", background='grey')
+            setattr(self, f"{status['name'].lower().replace(' ', '_')}_button", button)
+            
+            msg_type = self.import_message_type(status['message_type'])
+            callback = self.create_status_callback(status['name'])
+            
+            try:
+                subscriber = self.create_subscription(msg_type, status['topic'], callback, qos_profile=qos_profile_sensor_data)
+                self.subscribers.append(subscriber)
+            except Exception as e:
+                print(f"Error creating subscription for topic '{status['topic']}': {e}")
 
     def setup_recording(self):
+        # Check if 'recording' exists in the config
+        if 'recording' not in self.config:
+            print("Warning: 'recording' key not found in config. Recording will not be set up.")
+            return  # Exit the function early
+
         recording_config = self.config['recording']
+
+        # Check for required keys in recording_config
+        if 'message_type' not in recording_config or 'topic' not in recording_config:
+            print("Warning: 'message_type' or 'topic' key not found in 'recording' config. Recording will not be set up.")
+            return  # Exit if necessary keys are missing
+
         self.recording_button = self.create_button(self.recording_frame, text="Recording\nin progress", row=0, column=2)
 
         msg_type = self.import_message_type(recording_config['message_type'])
-        self.recording_subscriber = self.create_subscription(msg_type, recording_config['topic'], self.rosbag_recording_callback, qos_profile=qos_profile_sensor_data)
+        
+        try:
+            self.recording_subscriber = self.create_subscription(
+                msg_type,
+                recording_config['topic'],
+                self.rosbag_recording_callback,
+                qos_profile=qos_profile_sensor_data
+            )
+        except Exception as e:
+            print(f"Error creating recording subscription: {e}")
 
     def setup_exit_button(self):
         # Create the exit button with grey color
@@ -142,7 +225,7 @@ class CheckTopicsGui(Node):
         )
         self.exit_button.configure(
             background="grey",        # Sets the background color to grey
-            activebackground="darkgrey"  # Sets the color when the button is pressed
+            activebackground="light gray"  # Sets the color when the button is pressed
         )
         # Make sure to set the columnspan in the grid configuration
         self.exit_button.grid(row=0, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
@@ -172,6 +255,11 @@ class CheckTopicsGui(Node):
             if len(self.sensors_timestamps[sensor_name]) > 10:
                 self.sensors_timestamps[sensor_name].pop(0)
 
+        return callback
+
+    def create_status_callback(self, robot_status):
+        def callback(msg):
+            self.robot_status[robot_status] = msg.data
         return callback
 
     def calculate_publish_rate(self, timestamps):
@@ -224,8 +312,8 @@ class CheckTopicsGui(Node):
         else:
             service_text = 'GPS'
         
-        self.gnss_status_button.configure(text=text, background=color, activebackground=color)
-        self.gnss_service_button.configure(text='Service: '+service_text, background='lightblue', activebackground='lightblue')
+        self.gnss_status_button.configure(text=text, background=color, activebackground='light gray')
+        self.gnss_service_button.configure(text='Service: '+service_text, background='lightblue', activebackground='light gray')
         
         self.gnss_status = -1
 
@@ -242,19 +330,30 @@ class CheckTopicsGui(Node):
             publish_rate = self.calculate_publish_rate(timestamps)
             button_text = f"{sensor_name} ({publish_rate:.1f} Hz)"  # Update button text with publish rate
 
-            button.configure(text=button_text, background=color, activebackground=color)
+            button.configure(text=button_text, background=color, activebackground='light gray')
 
         # Reset status to be updated if we get new topics 
         self.sensors_status = {sensor_name: False for sensor_name in self.sensors_status}
-        
+
+    def update_status_frame_gui(self):
+        for system_status, value in self.robot_status.items():
+            button = getattr(self, f"{system_status.lower().replace(' ', '_')}_button")
+            color = "coral" if value > 0 else "grey"
+
+            # Update button text
+            button_text = f"{system_status}: {value:.2f}"  # Update button text with publish rate
+
+            button.configure(text=button_text, background=color, activebackground='light gray')        
+
     def update_recording_frame_gui(self):
         color = "green" if self.recording else "red"
-        self.recording_button.configure(background=color, activebackground=color)
+        self.recording_button.configure(background=color, activebackground='light gray')
         self.recording = False
 
     def update_gui(self):
         self.update_sensors_frame_gui()
         self.update_gnss_status()
+        self.update_status_frame_gui()
         self.update_recording_frame_gui()
         self.gui.update()
 
