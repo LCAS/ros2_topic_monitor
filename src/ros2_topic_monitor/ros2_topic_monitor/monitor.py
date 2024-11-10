@@ -135,7 +135,6 @@ class CheckTopicsGui(Node):
         for index, sensor in enumerate(self.config['sensors']):
             self.sensors_status[sensor['name']] = False
             button = self.create_button(self.sensors_frame, sensor['name'], row=index, column=0)
-            # setattr(self, f"{sensor['name'].lower().replace(' ', '_')}_button", button)
 
             # Use get method to avoid KeyError
             msg_type = self.import_message_type(sensor.get('message_type', 'default_message_type'))  # Default message type
@@ -260,96 +259,177 @@ class CheckTopicsGui(Node):
         # Create the buttons
         for index, node_meta in enumerate(self.config['launch_files']):
             node_name = node_meta['name']
-            print(node_name)
-            tk.Button(self.launch_frame, text=f"Launch {node_name}", bg="grey",
-                    command=lambda: self.toggle_node(node_name, node_meta), width=18).grid(row=index, column=0, padx=10, pady=5)
-            tk.Button(self.launch_frame, text="Log", command=lambda: self.show_logs(node_name)).grid(row=index, column=1, padx=10, pady=5)
+            
+            # Create the launch button
+            launch_button = tk.Button(
+                self.launch_frame,
+                text=f"Launch {node_name}",
+                bg="grey",
+                width=18
+            )
+            
+            # Configure the command separately after creation to capture the correct variables
+            launch_button.config(
+                command=lambda node_name=node_name, node_meta=node_meta, launch_button=launch_button:
+                    self.toggle_node(node_name, node_meta, launch_button)
+            )
+            launch_button.grid(row=index, column=0, padx=10, pady=5)
 
-    def toggle_node(self, node_name, node_meta):
+            # Create and configure the log button
+            log_button = tk.Button(
+                self.launch_frame,
+                text="Log",
+                command=lambda node_name=node_name: self.show_logs(node_name)
+            )
+            log_button.grid(row=index, column=1, padx=10, pady=5)
+
+
+
+    def toggle_node(self, node_name, node_meta, button):
+        print(self.processes)
         if self.processes.get(node_name):
-            self.stop_node(node_name)
+            self.stop_node(node_name, button)
         else:
-            self.launch_node(node_name, node_meta)
+            self.launch_node(node_name, node_meta, button)
 
-    def launch_node(self, node_name, node_meta):
+    def launch_node(self, node_name, node_meta, button):
         queue = Queue()
         self.queues[node_name] = queue
 
-        thread = threading.Thread(target=self._run_node, args=(node_name, node_meta, queue))
+        thread = threading.Thread(target=self._launch_node_process, args=(node_name, node_meta, button, queue))
         thread.daemon = True
         thread.start()
 
-    def _run_node(self, node_name, node_meta, queue):
-        package = node_meta['package']
-        launch_file = node_meta['variations'][self.launch_desired_variation]['file']
-        args = node_meta['variations'][self.launch_desired_variation].get("args", {})
+    def _launch_node_process(self, node_name, node_meta, button, log_queue):
+        try:        
+            package = node_meta['package']
+            launch_file = node_meta['variations'][self.launch_desired_variation]['file']
+            args = node_meta['variations'][self.launch_desired_variation].get("args", {})
 
-        # Start the base command
-        cmd = (
-            "bash -c 'source /home/ros/aoc_strawberry_scenario_ws/install/setup.bash && "
-            "source /opt/ros/humble/setup.bash && "
-            "source /usr/share/colcon_cd/function/colcon_cd.sh && "
-            f"ros2 launch {package} {launch_file}"
-        )
-        # Parse and add args to the command
-        if args:
-            for arg_name, arg_value in args.items():
-                cmd += f" {arg_name}:={arg_value}"
+            # Start the base command
+            cmd = (
+                "bash -c 'source /home/ros/aoc_strawberry_scenario_ws/install/setup.bash && "
+                "source /opt/ros/humble/setup.bash && "
+                "source /usr/share/colcon_cd/function/colcon_cd.sh && "
+                f"ros2 launch {package} {launch_file}"
+            )
+            # Parse and add args to the command
+            if args:
+                for arg_name, arg_value in args.items():
+                    cmd += f" {arg_name}:={arg_value}"
+            
+            cmd += "'"
+
+            process = subprocess.Popen(
+                cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            self.processes[node_name] = process
+            
+            # Start thread to read logs
+            log_thread = threading.Thread(target=self._stream_logs, args=(node_name, process, log_queue, button))
+            log_thread.daemon = True
+            log_thread.start()
+            
+            # Update button color to green if no immediate error
+            button.config(bg="green")
         
-        cmd += "'"
+        except Exception as e:
+            # Display error in the log and update button
+            log_queue.put((str(e), 'error'))
+            button.config(bg="red", text=f"Launch {node_name}")
 
-        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        self.processes[node_name] = process
-
-        log_thread = threading.Thread(target=self._stream_logs, args=(node_name, process, queue))
-        log_thread.daemon = True
-        log_thread.start()
-
-    def _stream_logs(self, name, process, queue):
-        ansi_escape = re.compile(r'\x1B[@-_][0-?]*[ -/]*[@-~]')
-        while process.poll() is None:
-            for line in iter(process.stdout.readline, ''):
-                queue.put((ansi_escape.sub('', line), 'stdout'))
-            for line in iter(process.stderr.readline, ''):
-                queue.put((ansi_escape.sub('', line), 'stderr'))
-        self.processes.pop(name, None)
-
-    def stop_node(self, name):
-        process = self.processes.pop(name, None)
+    def stop_node(self, node_name, button):
+        process = self.processes.get(node_name)
         if process:
+            # Run the termination process in a separate thread to avoid blocking the main UI
+            termination_thread = threading.Thread(target=self._terminate_node_process, args=(node_name, process, button))
+            termination_thread.daemon = True
+            termination_thread.start()
+
+    def _terminate_node_process(self, node_name, process, button):
+        try:
+            # Attempt to terminate the process gracefully
             process.terminate()
-            try:
-                process.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
+
+            # Wait for process to terminate gracefully
+            process.communicate(timeout=5)  # Wait up to 5 seconds for graceful termination
+
+        except subprocess.TimeoutExpired:
+            # If the process didn't terminate, force kill it
+            process.kill()
+            process.communicate()  # Ensure all resources are cleaned up
+
+        # Clean up process from tracking and update button
+        if node_name in self.processes:
+            del self.processes[node_name]
+        
+        # Update the button state to reflect the process is no longer running
+        button.config(text=f"Launch {node_name}", bg="grey")
+
+
+    def _stream_logs(self, node_name, process, log_queue, button):
+        ansi_escape = re.compile(r'\x1B[@-_][0-?]*[ -/]*[@-~]')
+        try:
+            while process.poll() is None:
+                # Read stdout and stderr line-by-line
+                for line in iter(process.stdout.readline, ''):
+                    cleaned_line = ansi_escape.sub('', line)  # Remove ANSI codes
+                    log_queue.put((cleaned_line, 'stdout'))
+                for line in iter(process.stderr.readline, ''):
+                    cleaned_line = ansi_escape.sub('', line)  # Remove ANSI codes
+                    log_queue.put((cleaned_line, 'stderr'))
+            # Process has ended, remove from active processes
+            if node_name in self.processes:
+                del self.processes[node_name]
+                button.config(text=f"Launch {node_name}", bg="grey")
+        except Exception as e:
+            log_queue.put((f"Error: {e}", 'error'))
+            button.config(bg="red")
 
     def kill_all_nodes(self):
-        for name in list(self.processes):
-            self.stop_node(name)
+        # Terminate all running nodes
+        for node_name, process in self.processes.items():
+            if process and process.poll() is None:  # Check if process is still running
+                process.terminate()
+                try:
+                    process.communicate(timeout=5)  # Wait for graceful termination
+                except subprocess.TimeoutExpired:
+                    process.kill()  # Force kill if needed
 
-    def show_logs(self, name):
+        # Clear the processes dictionary
+        self.processes.clear()
+
+        # Update the button states for all nodes
+        for widget in self.gui.grid_slaves():
+            if isinstance(widget, tk.Button) and widget['text'].startswith('Stop'):
+                widget.config(text=f"Launch {widget['text'][5:]}", bg="grey")
+
+        # Disable the "Kill All ROS Nodes" button
+        self.kill_all_button.config(state="disabled", text="All Nodes Killed")
+
+    def show_logs(self, node_name):
         log_window = tk.Toplevel(self.gui)
-        log_window.title(f"Logs for {name}")
+        log_window.title(f"Logs for {node_name}")
         log_text = ScrolledText(log_window, state="disabled", width=80, height=20)
         log_text.pack(padx=10, pady=10)
 
+        # Configure tags for different log types
         log_text.tag_configure("stdout", foreground="black")
         log_text.tag_configure("stderr", foreground="red")
+        log_text.tag_configure("error", foreground="red", font=("TkDefaultFont", 10, "bold"))
 
+        # Update logs in real time
         def update_log():
             try:
                 while True:
-                    if name in self.queues:
-                        line, tag = self.queues[name].get_nowait()
-                        log_text.config(state="normal")
-                        log_text.insert(tk.END, line, tag)
-                        log_text.yview(tk.END)
-                        log_text.config(state="disabled")
-                    else:
-                        print(f"Queue for {name} not found.")
+                    line, tag = self.queues[node_name].get_nowait()
+                    log_text.config(state="normal")
+                    log_text.insert(tk.END, line, tag)
+                    log_text.yview(tk.END)  # Auto-scroll
+                    log_text.config(state="disabled")
             except Empty:
                 pass
-            log_window.after(100, update_log)
+            log_window.after(100, update_log)  # Refresh every 100 ms
 
         update_log()
 
@@ -489,8 +569,8 @@ def main(args=None):
     ctg = CheckTopicsGui()
 
     # Run ROS 2 spin in a separate thread
-    ros2_thread = threading.Thread(target=ros2_spin, args=(ctg,))
-    ros2_thread.start()
+    # ros2_thread = threading.Thread(target=ros2_spin, args=(ctg,))
+    # ros2_thread.start()
 
     try:
         ctg.gui.mainloop()  # Run Tkinter's main loop
@@ -498,7 +578,7 @@ def main(args=None):
         pass
     finally:
         ctg.window_closing()  # Call window_closing to ensure proper shutdown
-        ros2_thread.join()  # Ensure the ROS 2 thread has finished
+        # ros2_thread.join()  # Ensure the ROS 2 thread has finished
 
 if __name__ == '__main__':
     main()

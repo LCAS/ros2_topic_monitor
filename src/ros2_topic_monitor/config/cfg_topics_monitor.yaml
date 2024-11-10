@@ -23,3 +23,54 @@ gnss_status:
 recording:
   topic: "rosbag_recording"
   message_type: "std_msgs.msg.Empty"
+
+launch_files:
+  - name: "Robot"
+    package: "aoc_strawberry_scenario_bringup"
+    variations:
+      sim:
+        file: "robot_with_world_sim.launch.py"
+        args:
+          use_sim_time: True
+      real:
+        file: "robot_with_world_real.launch.py"
+        args:
+          use_sim_time: False
+
+  - name: "Navigation"
+    package: "aoc_strawberry_scenario_bringup"
+    variations:
+      sim:
+        file: "navigation_ekf_gps.launch.py"
+        args:
+          use_sim_time: True
+          use_rviz: False
+      real:
+        file: "navigation_ekf_gps.launch.py"
+        args:
+          use_sim_time: False
+          use_rviz: False
+
+  - name: "Topo_nav"
+    package: "aoc_strawberry_scenario_bringup"
+    variations:
+      sim:
+        file: "topological_nav.launch.py"
+        args:
+          use_sim_time: True
+      real:
+        file: "topological_nav.launch.py"
+        args:
+          use_sim_time: False
+
+  # - name: "scenario_viz"
+  #   package: "aoc_strawberry_scenario_bringup"
+  #   variations:
+  #     sim:
+  #       file: "rviz_launch.launch.py"
+  #       args:
+  #         use_sim_time: True
+  #     real:
+  #       file: "rviz_launch.launch.py"
+  #       args:
+  #         use_sim_time: False
