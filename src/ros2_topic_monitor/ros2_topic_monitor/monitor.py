@@ -24,18 +24,21 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
+import re
 import os
 import yaml
 import time
 import rclpy
+import threading
 import importlib
+import subprocess
 import tkinter as tk
 from rclpy.node import Node
 from rclpy import Parameter
+from queue import Queue, Empty
+from tkinter.scrolledtext import ScrolledText
 from rclpy.qos import qos_profile_sensor_data
 from ament_index_python.packages import get_package_share_directory
-import threading
-
 
 class CheckTopicsGui(Node):
     def __init__(self):
@@ -53,11 +56,15 @@ class CheckTopicsGui(Node):
         self.font_size = 12
 
         # Setup flags
+        self.current_row = 0  # Initialize a counter for rows
         self.sensors_status = {}
         self.robot_status = {}
         self.recording = False
         self.gnss_status = -1
         self.gnss_service = 1
+        self.launch_files = {}
+        self.processes = {}
+        self.queues = {}
 
         # Dictionary to store the message timestamps for each sensor
         self.sensors_timestamps = {}
@@ -77,11 +84,12 @@ class CheckTopicsGui(Node):
         self.gui.protocol("WM_DELETE_WINDOW", self.window_closing)
 
         # Setup frames
-        self.sensors_frame = self.create_label_frame(self.gui, "HEALTH", row=0, column=0)
-        self.gnss_status_frame = self.create_label_frame(self.gui, "GNSS STATUS", row=1, column=0)
-        self.robot_status_frame = self.create_label_frame(self.gui, "STATUS", row=2, column=0)
-        self.recording_frame = self.create_label_frame(self.gui, "RECORDING", row=3, column=0)
-        self.exit_frame = self.create_label_frame(self.gui, "", row=4, column=0)
+        self.sensors_frame = self.create_label_frame(self.gui, "HEALTH")
+        self.gnss_status_frame = self.create_label_frame(self.gui, "GNSS STATUS")
+        self.robot_status_frame = self.create_label_frame(self.gui, "STATUS")
+        self.recording_frame = self.create_label_frame(self.gui, "RECORDING")
+        self.launch_frame = self.create_label_frame(self.gui, "LAUNCH MANAGER")
+        self.exit_frame = self.create_label_frame(self.gui, "")
 
         self.subscribers = []
         self.setup_sensors()
@@ -89,6 +97,7 @@ class CheckTopicsGui(Node):
         self.setup_robot_status()
         self.setup_recording()
         self.setup_exit_button()
+        self.setup_launch()
 
         # Timer to update GUI
         self.timer = self.create_timer(2, self.update_gui)
@@ -96,15 +105,17 @@ class CheckTopicsGui(Node):
         # Initialize ROS 2 context
         self.is_initialized = True
 
-    def create_label_frame(self, parent, text='', row=0, column=0, columnspan=1):
+    def create_label_frame(self, parent, text='', column=0, columnspan=1):
         frame = tk.LabelFrame(parent, text=text, font=("Arial Bold", self.font_size + 1))
         
         # Add to grid with expansion in both directions
-        frame.grid(row=row, column=column, padx=10, pady=10, sticky="ew", columnspan=columnspan)
+        frame.grid(row=self.current_row, column=column, padx=10, pady=10, sticky="ew", columnspan=columnspan)
         
         # Configure columns in the frame to expand and center content
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_rowconfigure(0, weight=1)
+
+        self.current_row += 1
         
         return frame
 
@@ -124,7 +135,7 @@ class CheckTopicsGui(Node):
         for index, sensor in enumerate(self.config['sensors']):
             self.sensors_status[sensor['name']] = False
             button = self.create_button(self.sensors_frame, sensor['name'], row=index, column=0)
-            setattr(self, f"{sensor['name'].lower().replace(' ', '_')}_button", button)
+            # setattr(self, f"{sensor['name'].lower().replace(' ', '_')}_button", button)
 
             # Use get method to avoid KeyError
             msg_type = self.import_message_type(sensor.get('message_type', 'default_message_type'))  # Default message type
@@ -149,8 +160,8 @@ class CheckTopicsGui(Node):
             print("Warning: 'message_type' or 'topic' key not found in 'gnss_status' config. GNSS status will not be set up.")
             return  # Exit if necessary keys are missing
 
-        self.gnss_status_button = self.create_button(self.gnss_status_frame, text='NO FIX', row=0, column=1)
-        self.gnss_service_button = self.create_button(self.gnss_status_frame, text='GPS', row=1, column=1)
+        self.gnss_status_button = self.create_button(self.gnss_status_frame, text='NO FIX', row=0, column=0)
+        self.gnss_service_button = self.create_button(self.gnss_status_frame, text='GPS', row=1, column=0)
 
         msg_type = self.import_message_type(gnss_status_config['message_type'])
         
@@ -200,7 +211,7 @@ class CheckTopicsGui(Node):
             print("Warning: 'message_type' or 'topic' key not found in 'recording' config. Recording will not be set up.")
             return  # Exit if necessary keys are missing
 
-        self.recording_button = self.create_button(self.recording_frame, text="Recording\nin progress", row=0, column=2)
+        self.recording_button = self.create_button(self.recording_frame, text="Recording\nin progress", row=0, column=0)
 
         msg_type = self.import_message_type(recording_config['message_type'])
         
@@ -234,6 +245,114 @@ class CheckTopicsGui(Node):
         self.exit_frame.grid_columnconfigure(0, weight=1)
         self.exit_frame.grid_columnconfigure(1, weight=1)
         self.exit_frame.grid_columnconfigure(2, weight=1)
+
+    def setup_launch(self):
+        # Check if 'launch_files' exists in the config
+        if 'launch_files' not in self.config:
+            # Log a warning or error message
+            print("Warning: 'launch_files' key not found in config.")
+            self.launch_files = {}  # or set it to a default value if necessary
+            return  # Exit the function early
+        
+        # Check if we are running on the real robot
+        self.launch_desired_variation = 'sim' if "REAL_ROBOT" not in os.environ else 'real'
+
+        # Create the buttons
+        for index, node_meta in enumerate(self.config['launch_files']):
+            node_name = node_meta['name']
+            print(node_name)
+            tk.Button(self.launch_frame, text=f"Launch {node_name}", bg="grey",
+                    command=lambda: self.toggle_node(node_name, node_meta), width=18).grid(row=index, column=0, padx=10, pady=5)
+            tk.Button(self.launch_frame, text="Log", command=lambda: self.show_logs(node_name)).grid(row=index, column=1, padx=10, pady=5)
+
+    def toggle_node(self, node_name, node_meta):
+        if self.processes.get(node_name):
+            self.stop_node(node_name)
+        else:
+            self.launch_node(node_name, node_meta)
+
+    def launch_node(self, node_name, node_meta):
+        queue = Queue()
+        self.queues[node_name] = queue
+
+        thread = threading.Thread(target=self._run_node, args=(node_name, node_meta, queue))
+        thread.daemon = True
+        thread.start()
+
+    def _run_node(self, node_name, node_meta, queue):
+        package = node_meta['package']
+        launch_file = node_meta['variations'][self.launch_desired_variation]['file']
+        args = node_meta['variations'][self.launch_desired_variation].get("args", {})
+
+        # Start the base command
+        cmd = (
+            "bash -c 'source /home/ros/aoc_strawberry_scenario_ws/install/setup.bash && "
+            "source /opt/ros/humble/setup.bash && "
+            "source /usr/share/colcon_cd/function/colcon_cd.sh && "
+            f"ros2 launch {package} {launch_file}"
+        )
+        # Parse and add args to the command
+        if args:
+            for arg_name, arg_value in args.items():
+                cmd += f" {arg_name}:={arg_value}"
+        
+        cmd += "'"
+
+        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.processes[node_name] = process
+
+        log_thread = threading.Thread(target=self._stream_logs, args=(node_name, process, queue))
+        log_thread.daemon = True
+        log_thread.start()
+
+    def _stream_logs(self, name, process, queue):
+        ansi_escape = re.compile(r'\x1B[@-_][0-?]*[ -/]*[@-~]')
+        while process.poll() is None:
+            for line in iter(process.stdout.readline, ''):
+                queue.put((ansi_escape.sub('', line), 'stdout'))
+            for line in iter(process.stderr.readline, ''):
+                queue.put((ansi_escape.sub('', line), 'stderr'))
+        self.processes.pop(name, None)
+
+    def stop_node(self, name):
+        process = self.processes.pop(name, None)
+        if process:
+            process.terminate()
+            try:
+                process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+    def kill_all_nodes(self):
+        for name in list(self.processes):
+            self.stop_node(name)
+
+    def show_logs(self, name):
+        log_window = tk.Toplevel(self.gui)
+        log_window.title(f"Logs for {name}")
+        log_text = ScrolledText(log_window, state="disabled", width=80, height=20)
+        log_text.pack(padx=10, pady=10)
+
+        log_text.tag_configure("stdout", foreground="black")
+        log_text.tag_configure("stderr", foreground="red")
+
+        def update_log():
+            try:
+                while True:
+                    if name in self.queues:
+                        line, tag = self.queues[name].get_nowait()
+                        log_text.config(state="normal")
+                        log_text.insert(tk.END, line, tag)
+                        log_text.yview(tk.END)
+                        log_text.config(state="disabled")
+                    else:
+                        print(f"Queue for {name} not found.")
+            except Empty:
+                pass
+            log_window.after(100, update_log)
+
+        update_log()
+
 
     def import_message_type(self, message_type_str):
         module_name, class_name = message_type_str.rsplit('.', 1)
