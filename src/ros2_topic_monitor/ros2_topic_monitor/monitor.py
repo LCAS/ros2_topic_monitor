@@ -569,8 +569,8 @@ def main(args=None):
     ctg = CheckTopicsGui()
 
     # Run ROS 2 spin in a separate thread
-    # ros2_thread = threading.Thread(target=ros2_spin, args=(ctg,))
-    # ros2_thread.start()
+    ros2_thread = threading.Thread(target=ros2_spin, args=(ctg,))
+    ros2_thread.start()
 
     try:
         ctg.gui.mainloop()  # Run Tkinter's main loop
@@ -578,7 +578,7 @@ def main(args=None):
         pass
     finally:
         ctg.window_closing()  # Call window_closing to ensure proper shutdown
-        # ros2_thread.join()  # Ensure the ROS 2 thread has finished
+        ros2_thread.join()  # Ensure the ROS 2 thread has finished
 
 if __name__ == '__main__':
     main()
