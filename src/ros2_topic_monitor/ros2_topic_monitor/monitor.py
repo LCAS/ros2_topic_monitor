@@ -36,6 +36,8 @@ from rclpy.qos import qos_profile_sensor_data
 from ament_index_python.packages import get_package_share_directory
 import threading
 
+import json
+from std_msgs.msg import String
 
 class CheckTopicsGui(Node):
     def __init__(self):
@@ -95,6 +97,11 @@ class CheckTopicsGui(Node):
 
         # Initialize ROS 2 context
         self.is_initialized = True
+
+        # Publisher for JSON topic status
+        self.topic_status_publisher = self.create_publisher(
+            String, '/monitor/status', qos_profile_sensor_data
+        )
 
     def create_label_frame(self, parent, text='', row=0, column=0, columnspan=1):
         frame = tk.LabelFrame(parent, text=text, font=("Arial Bold", self.font_size + 1))
@@ -240,6 +247,38 @@ class CheckTopicsGui(Node):
         module = importlib.import_module(module_name)
         return getattr(module, class_name)
 
+    def publish_json_status(self):
+        status_data = {}
+        current_time = time.time()
+
+        # Gather sensor data
+        for sensor_name, timestamps in self.sensors_timestamps.items():
+            # Calculate the refresh rate
+            publish_rate = self.calculate_publish_rate(timestamps)
+
+            # Determine status
+            status = "active" if self.sensors_status.get(sensor_name, False) else "inactive"
+            if status == "inactive":
+                publish_rate = 0.0
+
+            status_data[sensor_name] = {
+                "status": status,
+                "refresh_rate_hz": round(publish_rate, 2)
+            }
+
+        # Add robot status
+        status_data["robot_status"] = {
+            key: round(value, 2) for key, value in self.robot_status.items()
+        }
+
+        # Convert to JSON
+        json_message = json.dumps(status_data)
+
+        # Publish the JSON string
+        json_msg = String()
+        json_msg.data = json_message
+        self.topic_status_publisher.publish(json_msg)
+
     def create_callback(self, sensor_name):
         def callback(msg):
             self.sensors_status[sensor_name] = True
@@ -332,8 +371,10 @@ class CheckTopicsGui(Node):
 
             button.configure(text=button_text, background=color, activebackground='light gray')
 
+    def reset_sensor_status(self):
         # Reset status to be updated if we get new topics 
         self.sensors_status = {sensor_name: False for sensor_name in self.sensors_status}
+
 
     def update_status_frame_gui(self):
         for system_status, value in self.robot_status.items():
@@ -356,6 +397,9 @@ class CheckTopicsGui(Node):
         self.update_status_frame_gui()
         self.update_recording_frame_gui()
         self.gui.update()
+        self.publish_json_status()
+
+        self.reset_sensor_status()
 
 
 def ros2_spin(node):
