@@ -25,10 +25,12 @@ SOFTWARE.
 """
 
 import os
+import re
 import yaml
 import time
 import math
 import rclpy
+import math
 import importlib
 import tkinter as tk
 from rclpy.node import Node
@@ -36,9 +38,54 @@ from rclpy import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from ament_index_python.packages import get_package_share_directory
 import threading
+import subprocess
 
 import json
 from std_msgs.msg import String
+
+import threading
+import subprocess
+import time
+
+class MultiTopicHzMonitor:
+    def __init__(self, topic_names):
+        self.rate_re = re.compile(r"average rate:\s*([\d\.]+)")
+        self.rates = {topic: None for topic in topic_names}
+        self.last_msg_time = {topic: 0 for topic in topic_names}
+
+        for topic in topic_names:
+            t = threading.Thread(target=self._run_hz, args=(topic,))
+            t.daemon = True
+            t.start()
+
+            # Also start a watchdog thread per topic
+            watchdog = threading.Thread(target=self._watch_topic, args=(topic,))
+            watchdog.daemon = True
+            watchdog.start()
+
+    def _run_hz(self, topic):
+        cmd = ["ros2", "topic", "hz", topic]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True)
+        for line in proc.stdout:
+            m = self.rate_re.search(line)
+            if m:
+                self.rates[topic] = float(m.group(1))
+                self.last_msg_time[topic] = time.time()
+
+    def _watch_topic(self, topic, timeout=2.0):
+        while True:
+            time.sleep(timeout)
+            last = self.last_msg_time.get(topic, 0)
+            if time.time() - last > timeout:
+                self.rates[topic] = 0.0  # Set to 0 if no messages in `timeout` seconds
+
+    def get_rate(self, topic):
+        return self.rates.get(topic, 0.0)
+
+    def get_all_rates(self):
+        return dict(self.rates)
+
 
 class CheckTopicsGui(Node):
     def __init__(self):
@@ -56,19 +103,19 @@ class CheckTopicsGui(Node):
         self.font_size = 12
 
         # Setup flags
-        self.sensors_status = {}
         self.robot_status = {}
         self.recording = False
         self.gnss_status = -1
         self.gnss_service = 1
 
-        # Dictionary to store the message timestamps for each sensor
-        self.sensors_timestamps = {}
-
         # Add dictionaries to hold the latest metrics
         self.battery_level = None
         self.traveled_distance = None
         self.robot_speed = None
+        
+        # Sensor topics list 
+        self.topics = []
+        self.sensors_hz_monitor = None
 
         # Load configuration from YAML file
         try:
@@ -108,6 +155,12 @@ class CheckTopicsGui(Node):
             String, '/monitor/status', qos_profile_sensor_data
         )
 
+    def get_topic_by_sensor_name(self, name):
+        for sensor in self.config['sensors']:
+            if sensor['name'] == name:
+                return sensor['topic']
+        return None  # or raise an error if not found
+
     def create_label_frame(self, parent, text='', row=0, column=0, columnspan=1):
         frame = tk.LabelFrame(parent, text=text, font=("Arial Bold", self.font_size + 1))
         
@@ -130,23 +183,17 @@ class CheckTopicsGui(Node):
         # Check if 'sensors' exists in the config
         if 'sensors' not in self.config:
             self.get_logger().warn("'sensors' key not found in config. No sensors will be set up.")
-            self.sensors_status = {}  # Set a default value if necessary
+
             return  # Exit the function early
 
         for index, sensor in enumerate(self.config['sensors']):
-            self.sensors_status[sensor['name']] = False
             button = self.create_button(self.sensors_frame, sensor['name'], row=index, column=0)
             setattr(self, f"{sensor['name'].lower().replace(' ', '_')}_button", button)
 
-            # Use get method to avoid KeyError
-            msg_type = self.import_message_type(sensor.get('message_type', 'default_message_type'))  # Default message type
-            callback = self.create_callback(sensor['name'])
+            self.topics.append(sensor['topic'])
+        
+        self.sensors_hz_monitor = MultiTopicHzMonitor(self.topics)
 
-            try:
-                subscriber = self.create_subscription(msg_type, sensor['topic'], callback, qos_profile=qos_profile_sensor_data)
-                self.subscribers.append(subscriber)
-            except Exception as e:
-                self.get_logger().error(f"Error creating subscription for sensor '{sensor['name']}': {e}")
 
     def setup_gnss_status(self):
         # Check if 'gnss_status' exists in the config
@@ -173,7 +220,7 @@ class CheckTopicsGui(Node):
                 msg_type, 
                 gnss_status_config['topic'], 
                 self.gnss_status_callback, 
-                qos_profile=qos_profile_sensor_data
+                qos_profile_sensor_data
             )
         except Exception as e:
             self.get_logger().error(f"Error creating GNSS status subscription: {e}")
@@ -196,22 +243,25 @@ class CheckTopicsGui(Node):
             callback = self.create_status_callback(status['name'])
             
             try:
-                subscriber = self.create_subscription(msg_type, status['topic'], callback, qos_profile=qos_profile_sensor_data)
+                subscriber = self.create_subscription(msg_type, status['topic'], callback, qos_profile_sensor_data)
                 self.subscribers.append(subscriber)
             except Exception as e:
-                self.get_logger().error(f"Error creating subscription for topic '{status['topic']}': {e}")
+                self.get_logger().error(f"error creating subscription for topic '{status['topic']}': {e}")
+
 
     def setup_recording(self):
         # Check if 'recording' exists in the config
         if 'recording' not in self.config:
-            self.get_logger().warn("'recording' key not found in config. Recording will not be set up.")
+            self.get_logger().warn("Warning: 'recording' key not found in config. Recording will not be set up.")
+
             return  # Exit the function early
 
         recording_config = self.config['recording']
 
         # Check for required keys in recording_config
         if 'message_type' not in recording_config or 'topic' not in recording_config:
-            self.get_logger().warn("'message_type' or 'topic' key not found in 'recording' config. Recording will not be set up.")
+            self.get_logger().warn("Warning: 'message_type' or 'topic' key not found in 'recording' config. Recording will not be set up.")
+
             return  # Exit if necessary keys are missing
 
         self.recording_button = self.create_button(self.recording_frame, text="Recording\nin progress", row=0, column=2)
@@ -223,7 +273,7 @@ class CheckTopicsGui(Node):
                 msg_type,
                 recording_config['topic'],
                 self.rosbag_recording_callback,
-                qos_profile=qos_profile_sensor_data
+                qos_profile_sensor_data
             )
         except Exception as e:
             self.get_logger().error(f"Error creating recording subscription: {e}")
@@ -256,21 +306,17 @@ class CheckTopicsGui(Node):
 
     def publish_json_status(self):
         status_data = {}
-        current_time = time.time()
 
-        # Gather sensor data
-        for sensor_name, timestamps in self.sensors_timestamps.items():
-            # Calculate the refresh rate
-            publish_rate = self.calculate_publish_rate(timestamps)
-
+        for index, sensor in enumerate(self.config['sensors']):
+            publish_rate = self.sensors_hz_monitor.get_rate(sensor['topic'])
+            rate = publish_rate if publish_rate is not None else 0.0
+            
             # Determine status
-            status = "active" if self.sensors_status.get(sensor_name, False) else "inactive"
-            if status == "inactive":
-                publish_rate = 0.0
+            status = "active" if rate != 0 else "inactive"
 
-            status_data[sensor_name] = {
+            status_data[sensor['name']] = {
                 "status": status,
-                "refresh_rate_hz": round(publish_rate, 2)
+                "refresh_rate_hz": round(rate, 2)
             }
 
         # Add robot status
@@ -286,42 +332,10 @@ class CheckTopicsGui(Node):
         json_msg.data = json_message
         self.topic_status_publisher.publish(json_msg)
 
-    def create_callback(self, sensor_name):
-        def callback(msg):
-            self.sensors_status[sensor_name] = True
-
-            # Track message arrival time for calculating publish rate
-            if sensor_name not in self.sensors_timestamps:
-                self.sensors_timestamps[sensor_name] = []
-            
-            current_time = time.time()
-            self.sensors_timestamps[sensor_name].append(current_time)
-
-            # Keep only the last few timestamps (for example, last 10 messages)
-            if len(self.sensors_timestamps[sensor_name]) > 10:
-                self.sensors_timestamps[sensor_name].pop(0)
-
-        return callback
-
     def create_status_callback(self, robot_status):
         def callback(msg):
             self.robot_status[robot_status] = msg.data
         return callback
-
-    def calculate_publish_rate(self, timestamps):
-        """Calculates the publish rate (Hz) based on message timestamps."""
-        if len(timestamps) < 2:
-            return 0.0  # Not enough data to calculate rate
-
-        # Calculate time differences between consecutive messages
-        time_diffs = [timestamps[i] - timestamps[i - 1] for i in range(1, len(timestamps))]
-
-        # Calculate the average time difference
-        avg_time_diff = sum(time_diffs) / len(time_diffs) if time_diffs else 0
-
-        # Calculate the rate in Hz
-        publish_rate = 1.0 / avg_time_diff if avg_time_diff > 0 else 0
-        return publish_rate
 
     def window_closing(self):
         if self.is_initialized:
@@ -338,6 +352,24 @@ class CheckTopicsGui(Node):
     def gnss_status_callback(self, msg):
         self.gnss_status = msg.status.status
         self.gnss_service = msg.status.service
+        # Extract diagonal terms (variance in m^2)
+        cov_EE = msg.position_covariance[0]
+        cov_NN = msg.position_covariance[4]
+        cov_UU = msg.position_covariance[8]
+
+        # Convert to standard deviation (σ) in meters
+        self.std_E = math.sqrt(cov_EE)
+        self.std_N = math.sqrt(cov_NN)
+        self.std_U = math.sqrt(cov_UU)
+
+        # self.get_logger().info(f'--- GPS Fix Received ---')
+        # self.get_logger().info(f'Latitude: {msg.latitude:.8f}, Longitude: {msg.longitude:.8f}, Altitude: {msg.altitude:.2f} m')
+        # self.get_logger().info(f'Standard deviation (XY): East = {self.std_E:.3f} m, North = {self.std_N:.3f} m')
+        # self.get_logger().info(f'Standard deviation (Z): Up = {self.std_U:.3f} m')
+
+        # Optionally, combine XY uncertainty as RMS
+        self.xy_uncertainty = math.sqrt(self.std_E**2 + self.std_N**2)
+        # self.get_logger().info(f'Combined XY plane pose uncertainty: {self.xy_uncertainty:.3f} m')
 
         # Extract diagonal terms (variance in m^2)
         cov_EE = msg.position_covariance[0]
@@ -377,27 +409,31 @@ class CheckTopicsGui(Node):
         std_n = f'STD_N: {self.std_N} m'
         self.gnss_std_north.configure(text=std_n, background='lightblue', activebackground='light gray')
         
+        std_e = f'STD_E: {self.std_E} m'
+        self.gnss_std_east.configure(text=std_e, background='lightblue', activebackground='light gray')
+
+        std_n = f'STD_N: {self.std_N} m'
+        self.gnss_std_north.configure(text=std_n, background='lightblue', activebackground='light gray')
+
         self.gnss_status = -1
 
     def rosbag_recording_callback(self, msg):
         self.recording = True
 
     def update_sensors_frame_gui(self):
-        for sensor_name, status in self.sensors_status.items():
+        
+        for index, sensor in enumerate(self.config['sensors']):
+            sensor_name = sensor['name']
             button = getattr(self, f"{sensor_name.lower().replace(' ', '_')}_button")
-            color = "green" if status else "red"
 
             # Calculate publish rate and update button text
-            timestamps = self.sensors_timestamps.get(sensor_name, [])
-            publish_rate = self.calculate_publish_rate(timestamps)
-            button_text = f"{sensor_name} ({publish_rate:.1f} Hz)"  # Update button text with publish rate
+            topic = self.get_topic_by_sensor_name(sensor_name)
+            publish_rate = self.sensors_hz_monitor.get_rate(topic)
+            rate = publish_rate if publish_rate is not None else 0.0
+            button_text = f"{sensor_name} ({rate:.1f} Hz)"
 
+            color = "green" if rate != 0 else "red"
             button.configure(text=button_text, background=color, activebackground='light gray')
-
-    def reset_sensor_status(self):
-        # Reset status to be updated if we get new topics 
-        self.sensors_status = {sensor_name: False for sensor_name in self.sensors_status}
-
 
     def update_status_frame_gui(self):
         for system_status, value in self.robot_status.items():
@@ -427,10 +463,8 @@ class CheckTopicsGui(Node):
         except tk.TclError:
             self.get_logger().warn("GUI closed unexpectedly.")
             rclpy.shutdown()
-            
+    
         self.publish_json_status()
-        self.reset_sensor_status()
-
 
 def ros2_spin(node):
     try:
