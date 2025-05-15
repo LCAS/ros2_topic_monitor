@@ -42,17 +42,25 @@ import subprocess
 import json
 from std_msgs.msg import String
 
+import threading
+import subprocess
+import time
+
 class MultiTopicHzMonitor:
     def __init__(self, topic_names):
-        # Regex to capture lines like "average rate: 10.000"
         self.rate_re = re.compile(r"average rate:\s*([\d\.]+)")
-        # Dict to hold latest rate per topic
         self.rates = {topic: None for topic in topic_names}
-        # Kick off one thread+process per topic
+        self.last_msg_time = {topic: 0 for topic in topic_names}
+
         for topic in topic_names:
             t = threading.Thread(target=self._run_hz, args=(topic,))
             t.daemon = True
             t.start()
+
+            # Also start a watchdog thread per topic
+            watchdog = threading.Thread(target=self._watch_topic, args=(topic,))
+            watchdog.daemon = True
+            watchdog.start()
 
     def _run_hz(self, topic):
         cmd = ["ros2", "topic", "hz", topic]
@@ -62,13 +70,19 @@ class MultiTopicHzMonitor:
             m = self.rate_re.search(line)
             if m:
                 self.rates[topic] = float(m.group(1))
+                self.last_msg_time[topic] = time.time()
+
+    def _watch_topic(self, topic, timeout=2.0):
+        while True:
+            time.sleep(timeout)
+            last = self.last_msg_time.get(topic, 0)
+            if time.time() - last > timeout:
+                self.rates[topic] = 0.0  # Set to 0 if no messages in `timeout` seconds
 
     def get_rate(self, topic):
-        """Return latest rate for one topic, or None if not yet measured."""
-        return self.rates.get(topic)
+        return self.rates.get(topic, 0.0)
 
     def get_all_rates(self):
-        """Return dict of { topic: rate } for all monitored topics."""
         return dict(self.rates)
 
 
@@ -193,6 +207,8 @@ class CheckTopicsGui(Node):
 
         self.gnss_status_button = self.create_button(self.gnss_status_frame, text='NO FIX', row=0, column=1)
         self.gnss_service_button = self.create_button(self.gnss_status_frame, text='GPS', row=1, column=1)
+        self.gnss_std_east = self.create_button(self.gnss_status_frame, text='STD_E', row=2, column=1)
+        self.gnss_std_north = self.create_button(self.gnss_status_frame, text='STD_N', row=3, column=1)
 
         msg_type = self.import_message_type(gnss_status_config['message_type'])
         
@@ -370,6 +386,12 @@ class CheckTopicsGui(Node):
         
         self.gnss_status_button.configure(text=text, background=color, activebackground='light gray')
         self.gnss_service_button.configure(text='Service: '+service_text, background='lightblue', activebackground='light gray')
+        
+        std_e = f'STD_E: {self.std_E} m'
+        self.gnss_std_east.configure(text=std_e, background='lightblue', activebackground='light gray')
+
+        std_n = f'STD_N: {self.std_N} m'
+        self.gnss_std_north.configure(text=std_n, background='lightblue', activebackground='light gray')
 
         self.gnss_status = -1
 
