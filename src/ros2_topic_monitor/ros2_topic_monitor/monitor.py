@@ -28,6 +28,7 @@ import os
 import re
 import yaml
 import time
+import math
 import rclpy
 import math
 import importlib
@@ -123,7 +124,7 @@ class CheckTopicsGui(Node):
         except FileNotFoundError:
             self.get_logger().error(f"Configuration file not found: {self.cfg_pth}")
             self.config = {}
-            
+
         # Setup tkinter GUI
         self.gui = tk.Tk()
         self.gui.title("TOPICS MONITOR")
@@ -182,6 +183,7 @@ class CheckTopicsGui(Node):
         # Check if 'sensors' exists in the config
         if 'sensors' not in self.config:
             self.get_logger().warn("'sensors' key not found in config. No sensors will be set up.")
+
             return  # Exit the function early
 
         for index, sensor in enumerate(self.config['sensors']):
@@ -191,6 +193,7 @@ class CheckTopicsGui(Node):
             self.topics.append(sensor['topic'])
         
         self.sensors_hz_monitor = MultiTopicHzMonitor(self.topics)
+
 
     def setup_gnss_status(self):
         # Check if 'gnss_status' exists in the config
@@ -245,10 +248,12 @@ class CheckTopicsGui(Node):
             except Exception as e:
                 self.get_logger().error(f"error creating subscription for topic '{status['topic']}': {e}")
 
+
     def setup_recording(self):
         # Check if 'recording' exists in the config
         if 'recording' not in self.config:
             self.get_logger().warn("Warning: 'recording' key not found in config. Recording will not be set up.")
+
             return  # Exit the function early
 
         recording_config = self.config['recording']
@@ -256,6 +261,7 @@ class CheckTopicsGui(Node):
         # Check for required keys in recording_config
         if 'message_type' not in recording_config or 'topic' not in recording_config:
             self.get_logger().warn("Warning: 'message_type' or 'topic' key not found in 'recording' config. Recording will not be set up.")
+
             return  # Exit if necessary keys are missing
 
         self.recording_button = self.create_button(self.recording_frame, text="Recording\nin progress", row=0, column=2)
@@ -365,6 +371,16 @@ class CheckTopicsGui(Node):
         self.xy_uncertainty = math.sqrt(self.std_E**2 + self.std_N**2)
         # self.get_logger().info(f'Combined XY plane pose uncertainty: {self.xy_uncertainty:.3f} m')
 
+        # Extract diagonal terms (variance in m^2)
+        cov_EE = msg.position_covariance[0]
+        cov_NN = msg.position_covariance[4]
+        cov_UU = msg.position_covariance[8]
+
+        # Convert to standard deviation (σ) in meters
+        self.std_E = math.sqrt(cov_EE)
+        self.std_N = math.sqrt(cov_NN)
+        self.std_U = math.sqrt(cov_UU)
+
     def update_gnss_status(self):
         if self.gnss_status == 2:
             text, color = 'GBAS FIX', "green"
@@ -386,6 +402,12 @@ class CheckTopicsGui(Node):
         
         self.gnss_status_button.configure(text=text, background=color, activebackground='light gray')
         self.gnss_service_button.configure(text='Service: '+service_text, background='lightblue', activebackground='light gray')
+
+        std_e = f'STD_E: {self.std_E} m'
+        self.gnss_std_east.configure(text=std_e, background='lightblue', activebackground='light gray')
+
+        std_n = f'STD_N: {self.std_N} m'
+        self.gnss_std_north.configure(text=std_n, background='lightblue', activebackground='light gray')
         
         std_e = f'STD_E: {self.std_E} m'
         self.gnss_std_east.configure(text=std_e, background='lightblue', activebackground='light gray')
