@@ -129,7 +129,7 @@ class CheckTopicsGui(Node):
     def setup_sensors(self):
         # Check if 'sensors' exists in the config
         if 'sensors' not in self.config:
-            print("Warning: 'sensors' key not found in config. No sensors will be set up.")
+            self.get_logger().warn("'sensors' key not found in config. No sensors will be set up.")
             self.sensors_status = {}  # Set a default value if necessary
             return  # Exit the function early
 
@@ -146,19 +146,19 @@ class CheckTopicsGui(Node):
                 subscriber = self.create_subscription(msg_type, sensor['topic'], callback, qos_profile=qos_profile_sensor_data)
                 self.subscribers.append(subscriber)
             except Exception as e:
-                print(f"Error creating subscription for sensor '{sensor['name']}': {e}")
+                self.get_logger().error(f"Error creating subscription for sensor '{sensor['name']}': {e}")
 
     def setup_gnss_status(self):
         # Check if 'gnss_status' exists in the config
         if 'gnss_status' not in self.config:
-            print("Warning: 'gnss_status' key not found in config. GNSS status will not be set up.")
+            self.get_logger().warn("'gnss_status' key not found in config. GNSS status will not be set up.")
             return  # Exit the function early
 
         gnss_status_config = self.config['gnss_status']
 
         # Check for required keys in gnss_status_config
         if 'message_type' not in gnss_status_config or 'topic' not in gnss_status_config:
-            print("Warning: 'message_type' or 'topic' key not found in 'gnss_status' config. GNSS status will not be set up.")
+            self.get_logger().warn("'message_type' or 'topic' key not found in 'gnss_status' config. GNSS status will not be set up.")
             return  # Exit if necessary keys are missing
 
         self.gnss_status_button = self.create_button(self.gnss_status_frame, text='NO FIX', row=0, column=1)
@@ -176,13 +176,13 @@ class CheckTopicsGui(Node):
                 qos_profile=qos_profile_sensor_data
             )
         except Exception as e:
-            print(f"Error creating GNSS status subscription: {e}")
+            self.get_logger().error(f"Error creating GNSS status subscription: {e}")
 
     def setup_robot_status(self):
         # Check if 'robot_status' exists in the config
         if 'robot_status' not in self.config:
             # Log a warning or error message
-            print("Warning: 'robot_status' key not found in config. Using default settings.")
+            self.get_logger().warn("'robot_status' key not found in config. Using default settings.")
             self.robot_status = {}  # or set it to a default value if necessary
             return  # Exit the function early
 
@@ -199,19 +199,19 @@ class CheckTopicsGui(Node):
                 subscriber = self.create_subscription(msg_type, status['topic'], callback, qos_profile=qos_profile_sensor_data)
                 self.subscribers.append(subscriber)
             except Exception as e:
-                print(f"Error creating subscription for topic '{status['topic']}': {e}")
+                self.get_logger().error(f"Error creating subscription for topic '{status['topic']}': {e}")
 
     def setup_recording(self):
         # Check if 'recording' exists in the config
         if 'recording' not in self.config:
-            print("Warning: 'recording' key not found in config. Recording will not be set up.")
+            self.get_logger().warn("'recording' key not found in config. Recording will not be set up.")
             return  # Exit the function early
 
         recording_config = self.config['recording']
 
         # Check for required keys in recording_config
         if 'message_type' not in recording_config or 'topic' not in recording_config:
-            print("Warning: 'message_type' or 'topic' key not found in 'recording' config. Recording will not be set up.")
+            self.get_logger().warn("'message_type' or 'topic' key not found in 'recording' config. Recording will not be set up.")
             return  # Exit if necessary keys are missing
 
         self.recording_button = self.create_button(self.recording_frame, text="Recording\nin progress", row=0, column=2)
@@ -226,7 +226,7 @@ class CheckTopicsGui(Node):
                 qos_profile=qos_profile_sensor_data
             )
         except Exception as e:
-            print(f"Error creating recording subscription: {e}")
+            self.get_logger().error(f"Error creating recording subscription: {e}")
 
     def setup_exit_button(self):
         # Create the exit button with grey color
@@ -330,7 +330,7 @@ class CheckTopicsGui(Node):
                 self.is_initialized = False  # Mark as not initialized to avoid multiple shutdown attempts
                 rclpy.shutdown()
             except Exception as e:
-                print(f"Error during shutdown: {e}")
+                self.get_logger().error(f"Error during shutdown: {e}")
 
     def dummy_callback(self):
         pass
