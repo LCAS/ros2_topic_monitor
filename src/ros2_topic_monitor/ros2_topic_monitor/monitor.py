@@ -27,6 +27,7 @@ SOFTWARE.
 import os
 import yaml
 import time
+import math
 import rclpy
 import importlib
 import tkinter as tk
@@ -70,8 +71,12 @@ class CheckTopicsGui(Node):
         self.robot_speed = None
 
         # Load configuration from YAML file
-        with open(self.cfg_pth, 'r') as file:
-            self.config = yaml.safe_load(file)
+        try:
+            with open(self.cfg_pth, 'r') as file:
+                self.config = yaml.safe_load(file)
+        except FileNotFoundError:
+            self.get_logger().error(f"Configuration file not found: {self.cfg_pth}")
+            self.config = {}
 
         # Setup tkinter GUI
         self.gui = tk.Tk()
@@ -158,6 +163,8 @@ class CheckTopicsGui(Node):
 
         self.gnss_status_button = self.create_button(self.gnss_status_frame, text='NO FIX', row=0, column=1)
         self.gnss_service_button = self.create_button(self.gnss_status_frame, text='GPS', row=1, column=1)
+        self.gnss_std_east = self.create_button(self.gnss_status_frame, text='STD_E', row=2, column=1)
+        self.gnss_std_north = self.create_button(self.gnss_status_frame, text='STD_N', row=3, column=1)
 
         msg_type = self.import_message_type(gnss_status_config['message_type'])
         
@@ -332,6 +339,16 @@ class CheckTopicsGui(Node):
         self.gnss_status = msg.status.status
         self.gnss_service = msg.status.service
 
+        # Extract diagonal terms (variance in m^2)
+        cov_EE = msg.position_covariance[0]
+        cov_NN = msg.position_covariance[4]
+        cov_UU = msg.position_covariance[8]
+
+        # Convert to standard deviation (σ) in meters
+        self.std_E = math.sqrt(cov_EE)
+        self.std_N = math.sqrt(cov_NN)
+        self.std_U = math.sqrt(cov_UU)
+
     def update_gnss_status(self):
         if self.gnss_status == 2:
             text, color = 'GBAS FIX', "green"
@@ -353,6 +370,12 @@ class CheckTopicsGui(Node):
         
         self.gnss_status_button.configure(text=text, background=color, activebackground='light gray')
         self.gnss_service_button.configure(text='Service: '+service_text, background='lightblue', activebackground='light gray')
+
+        std_e = f'STD_E: {self.std_E} m'
+        self.gnss_std_east.configure(text=std_e, background='lightblue', activebackground='light gray')
+
+        std_n = f'STD_N: {self.std_N} m'
+        self.gnss_std_north.configure(text=std_n, background='lightblue', activebackground='light gray')
         
         self.gnss_status = -1
 
@@ -387,6 +410,8 @@ class CheckTopicsGui(Node):
             button.configure(text=button_text, background=color, activebackground='light gray')        
 
     def update_recording_frame_gui(self):
+        if 'recording' not in self.config:
+            return
         color = "green" if self.recording else "red"
         self.recording_button.configure(background=color, activebackground='light gray')
         self.recording = False
@@ -396,34 +421,34 @@ class CheckTopicsGui(Node):
         self.update_gnss_status()
         self.update_status_frame_gui()
         self.update_recording_frame_gui()
-        self.gui.update()
+        
+        try:
+            self.gui.update()
+        except tk.TclError:
+            self.get_logger().warn("GUI closed unexpectedly.")
+            rclpy.shutdown()
+            
         self.publish_json_status()
-
         self.reset_sensor_status()
 
 
 def ros2_spin(node):
     try:
         rclpy.spin(node)
-    except Exception as e:
-        print(f"Error during ROS 2 spin: {e}")
+    except KeyboardInterrupt:
+        print("Shutting down ROS2 node...")
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
+def start_ros2_spin(node):
+    threading.Thread(target=ros2_spin, args=(node,), daemon=True).start()
 
 def main(args=None):
     rclpy.init(args=args)
-    ctg = CheckTopicsGui()
-
-    # Run ROS 2 spin in a separate thread
-    ros2_thread = threading.Thread(target=ros2_spin, args=(ctg,))
-    ros2_thread.start()
-
-    try:
-        ctg.gui.mainloop()  # Run Tkinter's main loop
-    except KeyboardInterrupt:
-        pass
-    finally:
-        ctg.window_closing()  # Call window_closing to ensure proper shutdown
-        ros2_thread.join()  # Ensure the ROS 2 thread has finished
+    node = CheckTopicsGui()
+    start_ros2_spin(node)  # spin in background
+    node.gui.mainloop()
 
 if __name__ == '__main__':
     main()
