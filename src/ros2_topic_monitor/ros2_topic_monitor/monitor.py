@@ -371,10 +371,12 @@ class CheckTopicsGui(Node):
         self.gnss_status_button.configure(text=text, background=color, activebackground='light gray')
         self.gnss_service_button.configure(text='Service: '+service_text, background='lightblue', activebackground='light gray')
 
-        std_e = f'STD_E: {self.std_E} m'
+        std_e_val = getattr(self, 'std_E', None)
+        std_e = f'STD_E: {std_e_val:.3f} m' if std_e_val is not None else 'STD_E: N/A'
         self.gnss_std_east.configure(text=std_e, background='lightblue', activebackground='light gray')
 
-        std_n = f'STD_N: {self.std_N} m'
+        std_n_val = getattr(self, 'std_N', None)
+        std_n = f'STD_N: {std_n_val:.3f} m' if std_n_val is not None else 'STD_N: N/A'
         self.gnss_std_north.configure(text=std_n, background='lightblue', activebackground='light gray')
         
         self.gnss_status = -1
